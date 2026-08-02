@@ -17,8 +17,12 @@ def _evaluate_single_genome(args):
     Returns (fitness, turns_survived).
     """
     torch.set_num_threads(1)  # Prevent CPU thread oversubscription in worker processes
-    genome_dict, seed = args
-    genome = Genome.from_dict(genome_dict)
+    if len(args) == 3:
+        genome_dict, seed, device = args
+    else:
+        genome_dict, seed = args
+        device = "cpu"
+    genome = Genome.from_dict(genome_dict, device=device)
     env = BrickBlastEnv(seed=seed)
 
     obs, _ = env.reset(seed=seed)
@@ -35,7 +39,7 @@ def _evaluate_single_genome(args):
 
 
 class GeneticAlgorithm:
-    def __init__(self, pop_size=40, mutation_rate=0.15, mutation_scale=0.25, elitism_count=4, model_type="mlp", seed=None):
+    def __init__(self, pop_size=40, mutation_rate=0.15, mutation_scale=0.25, elitism_count=4, model_type="mlp", device="cpu", seed=None):
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
@@ -43,9 +47,10 @@ class GeneticAlgorithm:
         self.mutation_rate = mutation_rate
         self.mutation_scale = mutation_scale
         self.model_type = model_type
+        self.device = device
         self.elitism_count = max(2, min(pop_size // 5, elitism_count))
 
-        self.population = [Genome(model_type=self.model_type) for _ in range(pop_size)]
+        self.population = [Genome(model_type=self.model_type, device=self.device) for _ in range(pop_size)]
         self.generation = 0
         self.best_genome = None
         self.fitness_history = []  # list of (gen, max_fit, avg_fit, max_turns)
@@ -57,7 +62,7 @@ class GeneticAlgorithm:
         if num_processes is None:
             num_processes = max(1, mp.cpu_count() - 1)
 
-        args_list = [(g.to_dict(), seed_offset) for idx, g in enumerate(self.population)]
+        args_list = [(g.to_dict(), seed_offset, self.device) for idx, g in enumerate(self.population)]
 
         if num_processes > 1:
             try:

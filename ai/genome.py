@@ -9,7 +9,7 @@ import torch.nn as nn
 
 
 class Genome(nn.Module):
-    def __init__(self, input_size=21, hidden_size=16, model_type="mlp", seed=None):
+    def __init__(self, input_size=21, hidden_size=16, model_type="mlp", device=None, seed=None):
         super().__init__()
         if seed is not None:
             torch.manual_seed(seed)
@@ -17,6 +17,10 @@ class Genome(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.model_type = model_type
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device if (device == "cpu" or torch.cuda.is_available()) else "cpu")
 
         if self.model_type == "cnn":
             # 2D Convolutional Backbone (2 channels: Brick HP, Powerups -> 16 -> 32)
@@ -49,6 +53,7 @@ class Genome(nn.Module):
 
         self.fitness = 0.0
         self.turns_survived = 0
+        self.to(self.device)
 
     @torch.no_grad()
     def forward(self, x):
@@ -57,11 +62,11 @@ class Genome(nn.Module):
         Accepts either numpy array or torch.Tensor.
         """
         if isinstance(x, np.ndarray):
-            x_tensor = torch.from_numpy(x).float()
+            x_tensor = torch.from_numpy(x).float().to(self.device)
         elif isinstance(x, (list, tuple)):
-            x_tensor = torch.tensor(x, dtype=torch.float32)
+            x_tensor = torch.tensor(x, dtype=torch.float32, device=self.device)
         else:
-            x_tensor = x.float()
+            x_tensor = x.float().to(self.device)
 
         h = self.relu(self.fc1(x_tensor))
         out = self.tanh(self.fc2(h))
@@ -75,16 +80,16 @@ class Genome(nn.Module):
         globals_arr: (2,) or (B, 2)
         """
         if isinstance(grid, np.ndarray):
-            grid_t = torch.from_numpy(grid).float()
+            grid_t = torch.from_numpy(grid).float().to(self.device)
         else:
-            grid_t = grid.float()
+            grid_t = grid.float().to(self.device)
         if grid_t.ndim == 3:
             grid_t = grid_t.unsqueeze(0)
 
         if isinstance(globals_arr, np.ndarray):
-            glob_t = torch.from_numpy(globals_arr).float()
+            glob_t = torch.from_numpy(globals_arr).float().to(self.device)
         else:
-            glob_t = globals_arr.float()
+            glob_t = globals_arr.float().to(self.device)
         if glob_t.ndim == 1:
             glob_t = glob_t.unsqueeze(0)
 
@@ -136,7 +141,7 @@ class Genome(nn.Module):
         """
         Uniform crossover between self and another PyTorch Genome to produce a child.
         """
-        child = Genome(self.input_size, self.hidden_size, model_type=self.model_type)
+        child = Genome(self.input_size, self.hidden_size, model_type=self.model_type, device=self.device)
         for p_child, p_self, p_other in zip(child.parameters(), self.parameters(), other.parameters()):
             mask = torch.rand_like(p_self) < 0.5
             p_child.copy_(torch.where(mask, p_self, p_other))
@@ -160,22 +165,23 @@ class Genome(nn.Module):
         }
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, device=None):
         model_type = data.get("model_type", "mlp")
-        g = cls(data["input_size"], data["hidden_size"], model_type=model_type)
+        g = cls(data["input_size"], data["hidden_size"], model_type=model_type, device=device)
         with torch.no_grad():
             if "state_dict" in data and data["state_dict"]:
                 state_dict = {
-                    k: torch.tensor(v, dtype=torch.float32) for k, v in data["state_dict"].items()
+                    k: torch.tensor(v, dtype=torch.float32, device=g.device) for k, v in data["state_dict"].items()
                 }
                 g.load_state_dict(state_dict, strict=False)
             elif model_type == "mlp" and "W1" in data and len(data["W1"]) > 0:
-                g.fc1.weight.copy_(torch.tensor(data["W1"], dtype=torch.float32))
-                g.fc1.bias.copy_(torch.tensor(data["b1"], dtype=torch.float32))
-                g.fc2.weight.copy_(torch.tensor(data["W2"], dtype=torch.float32))
-                g.fc2.bias.copy_(torch.tensor(data["b2"], dtype=torch.float32))
+                g.fc1.weight.copy_(torch.tensor(data["W1"], dtype=torch.float32, device=g.device))
+                g.fc1.bias.copy_(torch.tensor(data["b1"], dtype=torch.float32, device=g.device))
+                g.fc2.weight.copy_(torch.tensor(data["W2"], dtype=torch.float32, device=g.device))
+                g.fc2.bias.copy_(torch.tensor(data["b2"], dtype=torch.float32, device=g.device))
         g.fitness = float(data.get("fitness", 0.0))
         g.turns_survived = int(data.get("turns_survived", 0))
+        g.to(g.device)
         return g
 
     def save(self, filepath):
@@ -183,7 +189,7 @@ class Genome(nn.Module):
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
-    def load(cls, filepath):
+    def load(cls, filepath, device=None):
         with open(filepath, "r") as f:
             data = json.load(f)
-        return cls.from_dict(data)
+        return cls.from_dict(data, device=device)
