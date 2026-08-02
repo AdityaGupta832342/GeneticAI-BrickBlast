@@ -6,6 +6,7 @@ Run with:
 import os
 import unittest
 import numpy as np
+import torch
 from brickblast.constants import GRID_COLS, GRID_ROWS, INITIAL_BALLS, WIDTH, HEIGHT, BOTTOM_MARGIN
 from brickblast.brick import Brick
 from brickblast.powerups import RedirectPowerup, MultiplierPowerup, LaserPowerup
@@ -163,6 +164,45 @@ class TestRLAndGeneticAI(unittest.TestCase):
         max_fit, avg_fit, turns = ga.evaluate_population(max_turns=5)
         self.assertGreaterEqual(max_fit, 0.0)
         self.assertGreaterEqual(turns, 1)
+
+    def test_13_batched_vmap_policy_and_rl(self):
+        from ai.tensor_ga import TensorGeneticAlgorithm
+        from ai.rl import DQNAgent, PPOAgent
+
+        ga = TensorGeneticAlgorithm(pop_size=8, model_type="cnn", device="cpu", seed=42)
+        grids = torch.randn(8, 2, 10, 8)
+        globals_arr = torch.randn(8, 2)
+        actions = ga.predict_actions_vmap(grids, globals_arr)
+        self.assertEqual(actions.shape, (8,))
+
+        dqn = DQNAgent(input_dim=21, action_dim=18, device="cpu")
+        obs = torch.randn(12, 21)
+        q_values = dqn(obs)
+        self.assertEqual(q_values.shape, (12, 18))
+        next_obs = torch.randn(12, 21)
+        loss = dqn.update(obs, torch.randint(0, 18, (12,)), next_obs, torch.randn(12), torch.ones(12, dtype=torch.bool))
+        self.assertTrue(torch.isfinite(loss))
+
+        ppo = PPOAgent(input_dim=21, action_dim=18, device="cpu")
+        policy_logits = ppo.actor(obs)
+        self.assertEqual(policy_logits.shape, (12, 18))
+        ppo_loss = ppo.update(obs, torch.randint(0, 18, (12,)), torch.randn(12), torch.randn(12), torch.randn(12))
+        self.assertTrue(torch.isfinite(ppo_loss))
+
+    def test_14_tensor_rl_trainer_trajectory_loop(self):
+        from ai.rl import DQNAgent, TensorPolicyTrainer
+
+        trainer = TensorPolicyTrainer(
+            agent=DQNAgent(input_dim=162, action_dim=18, device="cpu"),
+            batch_size=4,
+            max_turns=3,
+            device="cpu",
+            seed=42,
+        )
+        traj = trainer.collect_trajectories(rollout_steps=2)
+        self.assertIn("obs", traj)
+        self.assertEqual(traj["obs"].shape[-1], 162)
+        self.assertEqual(traj["actions"].shape[0], 2)
 
 
 if __name__ == "__main__":

@@ -48,6 +48,42 @@ class TensorGeneticAlgorithm:
         self.fitness_history = []  # list of (gen, max_fit, avg_fit, max_turns)
 
     @torch.no_grad()
+    def predict_actions_vmap(self, grids, globals_arr):
+        """Evaluate all genomes in parallel using torch.vmap over per-genome model params."""
+        if len(self.population) == 0:
+            raise ValueError("Population is empty")
+
+        ref_model = self.population[0]
+        param_names = list(ref_model.state_dict().keys())
+        per_genome_params = tuple(
+            torch.stack([genome.state_dict()[name].detach().clone().to(self.device) for genome in self.population], dim=0)
+            for name in param_names
+        )
+
+        def _scalarize(out):
+            if out.ndim == 0:
+                return out
+            return out.reshape(-1)[0]
+
+        if self.model_type == "cnn":
+            def single_eval(param_tuple, grid_i, glob_i):
+                params = {name: tensor for name, tensor in zip(param_names, param_tuple)}
+                out = torch.func.functional_call(ref_model, params, (grid_i, glob_i))
+                return _scalarize(out)
+
+            vals_t = torch.vmap(single_eval, in_dims=(0, 0, 0))(per_genome_params, grids, globals_arr)
+        else:
+            def single_eval(param_tuple, glob_i):
+                params = {name: tensor for name, tensor in zip(param_names, param_tuple)}
+                out = torch.func.functional_call(ref_model, params, (glob_i,))
+                return _scalarize(out)
+
+            vals_t = torch.vmap(single_eval, in_dims=(0, 0))(per_genome_params, globals_arr)
+
+        angles_deg = 90.0 + vals_t * 87.0
+        return angles_deg.clamp(3.0, 177.0)
+
+    @torch.no_grad()
     def _predict_actions_batched(self, grids, globals_arr):
         """
         Predict continuous aiming angles in [3.0, 177.0] for all B genomes in parallel.
@@ -55,18 +91,7 @@ class TensorGeneticAlgorithm:
         globals_arr: (B, 2)
         Returns tensor of shape (B,)
         """
-        angles = []
-        for idx, genome in enumerate(self.population):
-            grid_i = grids[idx : idx + 1]
-            glob_i = globals_arr[idx : idx + 1]
-            if self.model_type == "cnn":
-                val = genome.forward_cnn_tensor(grid_i, glob_i).view(1)
-            else:
-                val = genome.forward_tensor(glob_i).view(1)
-            angles.append(val)
-        vals_t = torch.cat(angles, dim=0)
-        angles_deg = 90.0 + vals_t * 87.0
-        return angles_deg.clamp(3.0, 177.0)
+        return self.predict_actions_vmap(grids, globals_arr)
 
     def evaluate_population(self, max_turns=50, seed_offset=0):
         """
