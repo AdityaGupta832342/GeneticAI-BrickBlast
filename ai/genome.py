@@ -56,10 +56,9 @@ class Genome(nn.Module):
         self.to(self.device)
 
     @torch.no_grad()
-    def forward(self, x):
+    def forward_tensor(self, x):
         """
-        Forward pass through PyTorch MLP: Input(21) -> Hidden(16, ReLU) -> Output(1, Tanh in [-1.0, 1.0]).
-        Accepts either numpy array or torch.Tensor.
+        Forward pass returning a PyTorch Tensor (for vmap/functional_call).
         """
         if isinstance(x, np.ndarray):
             x_tensor = torch.from_numpy(x).float().to(self.device)
@@ -70,12 +69,30 @@ class Genome(nn.Module):
 
         h = self.relu(self.fc1(x_tensor))
         out = self.tanh(self.fc2(h))
-        return float(out.item())
+        return out.squeeze(-1)
 
     @torch.no_grad()
-    def forward_cnn(self, grid, globals_arr):
+    def forward(self, *args, **kwargs):
         """
-        Forward pass for CNN:
+        Forward pass through PyTorch Genome. Supports MLP (1 arg x) or CNN (2 args grid, globals_arr).
+        """
+        if self.model_type == "cnn" or "grid" in kwargs or len(args) == 2:
+            if "grid" in kwargs and "globals_arr" in kwargs:
+                grid = kwargs["grid"]
+                globals_arr = kwargs["globals_arr"]
+            elif len(args) == 2:
+                grid, globals_arr = args
+            else:
+                raise ValueError("Expected grid and globals_arr for CNN forward")
+            return self.forward_cnn_tensor(grid, globals_arr)
+        else:
+            x = args[0] if len(args) > 0 else kwargs["x"]
+            return float(self.forward_tensor(x).item())
+
+    @torch.no_grad()
+    def forward_cnn_tensor(self, grid, globals_arr):
+        """
+        Tensor-output forward pass for CNN (for vmap/functional_call):
         grid: (2, 10, 8) or (B, 2, 10, 8)
         globals_arr: (2,) or (B, 2)
         """
@@ -96,7 +113,16 @@ class Genome(nn.Module):
         spatial_feats = self.conv(grid_t)
         combined = torch.cat([spatial_feats, glob_t], dim=-1)
         out = self.fc(combined)
-        return float(out.item())
+        return out.squeeze(-1).squeeze(-1)
+
+    @torch.no_grad()
+    def forward_cnn(self, grid, globals_arr):
+        """
+        Forward pass for CNN:
+        grid: (2, 10, 8) or (B, 2, 10, 8)
+        globals_arr: (2,) or (B, 2)
+        """
+        return float(self.forward_cnn_tensor(grid, globals_arr).item())
 
     @torch.no_grad()
     def select_action(self, env):

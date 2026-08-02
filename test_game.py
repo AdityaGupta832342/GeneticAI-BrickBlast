@@ -145,6 +145,25 @@ class TestRLAndGeneticAI(unittest.TestCase):
         self.assertGreaterEqual(angle, 3.0)
         self.assertLessEqual(angle, 177.0)
 
+    def test_12_tensor_env_and_tensor_ga(self):
+        from env.tensor_env import TensorBrickBlastEnv
+        from ai.tensor_ga import TensorGeneticAlgorithm
+
+        env = TensorBrickBlastEnv(batch_size=10, max_balls=15, device="cpu", seed=42)
+        (grids, globals_arr) = env.get_grid_observation()
+        self.assertEqual(grids.shape, (10, 2, 10, 8))
+        self.assertEqual(globals_arr.shape, (10, 2))
+
+        angles = torch.full((10,), 90.0)
+        (grids2, globals2), reward, terminated, info = env.step(angles)
+        self.assertEqual(reward.shape, (10,))
+        self.assertEqual(terminated.shape, (10,))
+
+        ga = TensorGeneticAlgorithm(pop_size=8, model_type="cnn", device="cpu", seed=42)
+        max_fit, avg_fit, turns = ga.evaluate_population(max_turns=5)
+        self.assertGreaterEqual(max_fit, 0.0)
+        self.assertGreaterEqual(turns, 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
