@@ -67,12 +67,13 @@ def main():
     parser.add_argument("--processes", type=int, default=8, help="CPU processes for evaluation")
     parser.add_argument("--save-path", type=str, default="saved_models/best_model.json", help="Path to save best genome")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--model-type", type=str, default="mlp", choices=["mlp", "cnn"], help="Architecture type (mlp or cnn)")
     args = parser.parse_args()
 
     print(f"=== Brick Blast GA AI Training ===")
-    print(f"Generations: {args.generations} | Pop Size: {args.pop_size} | Processes: {args.processes}")
+    print(f"Model Type: {args.model_type.upper()} | Generations: {args.generations} | Pop Size: {args.pop_size} | Processes: {args.processes}")
 
-    ga = GeneticAlgorithm(pop_size=args.pop_size, seed=args.seed)
+    ga = GeneticAlgorithm(pop_size=args.pop_size, model_type=args.model_type, seed=args.seed)
     start_time = time.time()
 
     for gen in range(args.generations):

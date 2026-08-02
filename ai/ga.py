@@ -6,6 +6,7 @@ import os
 import random
 import multiprocessing as mp
 import numpy as np
+import torch
 from ai.genome import Genome
 from env.brickblast_env import BrickBlastEnv
 
@@ -15,6 +16,7 @@ def _evaluate_single_genome(args):
     Worker function for parallel evaluation of a single genome dictionary.
     Returns (fitness, turns_survived).
     """
+    torch.set_num_threads(1)  # Prevent CPU thread oversubscription in worker processes
     genome_dict, seed = args
     genome = Genome.from_dict(genome_dict)
     env = BrickBlastEnv(seed=seed)
@@ -33,16 +35,17 @@ def _evaluate_single_genome(args):
 
 
 class GeneticAlgorithm:
-    def __init__(self, pop_size=40, mutation_rate=0.15, mutation_scale=0.25, elitism_count=4, seed=None):
+    def __init__(self, pop_size=40, mutation_rate=0.15, mutation_scale=0.25, elitism_count=4, model_type="mlp", seed=None):
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
         self.pop_size = pop_size
         self.mutation_rate = mutation_rate
         self.mutation_scale = mutation_scale
+        self.model_type = model_type
         self.elitism_count = max(2, min(pop_size // 5, elitism_count))
 
-        self.population = [Genome() for _ in range(pop_size)]
+        self.population = [Genome(model_type=self.model_type) for _ in range(pop_size)]
         self.generation = 0
         self.best_genome = None
         self.fitness_history = []  # list of (gen, max_fit, avg_fit, max_turns)

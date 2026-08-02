@@ -126,6 +126,25 @@ class TestRLAndGeneticAI(unittest.TestCase):
         self.assertEqual(game.frenzy_cooldown, 5)  # 5-turn cooldown active
         self.assertTrue(game.frenzy_active)
 
+    def test_11_cnn_genome_forward_and_serialization(self):
+        genome = Genome(model_type="cnn", seed=1)
+        grid = np.random.randn(2, 10, 8).astype(np.float32)
+        glob = np.array([0.5, 0.1], dtype=np.float32)
+        score = genome.forward_cnn(grid, glob)
+        self.assertIsInstance(score, float)
+
+        data = genome.to_dict()
+        self.assertEqual(data["model_type"], "cnn")
+        g2 = Genome.from_dict(data)
+        score2 = g2.forward_cnn(grid, glob)
+        self.assertAlmostEqual(score, score2, places=5)
+
+        env = BrickBlastEnv(seed=1)
+        env.reset()
+        angle = genome.select_action(env)
+        self.assertGreaterEqual(angle, 3.0)
+        self.assertLessEqual(angle, 177.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

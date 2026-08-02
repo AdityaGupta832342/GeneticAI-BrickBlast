@@ -93,6 +93,31 @@ class BrickBlastEnv:
         ]
         return np.array(obs, dtype=np.float32)
 
+    def get_grid_observation(self):
+        """
+        Returns a 2D multi-channel grid observation for CNN models:
+        - grid: shape (2, 10, 8) -> channel 0 = normalized brick HP, channel 1 = powerup type
+        - globals: shape (2,) -> [normalized_launch_x, normalized_turn]
+        """
+        b = self.game.board
+        grid = np.zeros((2, GRID_ROWS, GRID_COLS), dtype=np.float32)
+
+        for brick in b.bricks:
+            if 0 <= brick.row < GRID_ROWS and 0 <= brick.col < GRID_COLS:
+                grid[0, brick.row, brick.col] = min(1.0, brick.hp / 20.0)
+
+        for pu in b.powerups:
+            if 0 <= pu.row < GRID_ROWS and 0 <= pu.col < GRID_COLS:
+                val = 0.33
+                if pu.type == "multiplier":
+                    val = 0.66
+                elif pu.type == "laser":
+                    val = 1.0
+                grid[1, pu.row, pu.col] = val
+
+        globals_arr = np.array([b.launch_x / float(WIDTH), min(1.0, b.turn / 100.0)], dtype=np.float32)
+        return grid, globals_arr
+
     def get_action_eval_features(self, candidate_angle_deg):
         """
         Returns a 24-dimensional feature vector combining the 21 board features
