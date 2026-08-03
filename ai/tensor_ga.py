@@ -22,6 +22,13 @@ class TensorGeneticAlgorithm:
         model_type="cnn",
         device=None,
         seed=None,
+        ricochet_bonus_scale=0.05,
+        brick_destroy_bonus=2.0,
+        brick_hit_bonus=0.10,
+        survival_bonus=3.0,
+        game_over_penalty=100.0,
+        danger_row_penalty=2.0,
+        weight_limit=3.0,
     ):
         if seed is not None:
             random.seed(seed)
@@ -31,6 +38,13 @@ class TensorGeneticAlgorithm:
         self.pop_size = pop_size
         self.mutation_rate = mutation_rate
         self.mutation_scale = mutation_scale
+        self.ricochet_bonus_scale = float(ricochet_bonus_scale)
+        self.brick_destroy_bonus = float(brick_destroy_bonus)
+        self.brick_hit_bonus = float(brick_hit_bonus)
+        self.survival_bonus = float(survival_bonus)
+        self.game_over_penalty = float(game_over_penalty)
+        self.danger_row_penalty = float(danger_row_penalty)
+        self.weight_limit = float(weight_limit)
         self.model_type = model_type
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -45,6 +59,7 @@ class TensorGeneticAlgorithm:
         ]
         self.generation = 0
         self.best_genome = None
+        self.best_fitness = -float("inf")
         self.fitness_history = []  # list of (gen, max_fit, avg_fit, max_turns)
 
     @torch.no_grad()
@@ -99,7 +114,16 @@ class TensorGeneticAlgorithm:
         Returns (max_fit, avg_fit, max_turns_survived).
         """
         env = TensorBrickBlastEnv(
-            batch_size=self.pop_size, max_balls=30, device=self.device, seed=seed_offset
+            batch_size=self.pop_size,
+            max_balls=30,
+            device=self.device,
+            seed=seed_offset,
+            ricochet_bonus_scale=self.ricochet_bonus_scale,
+            brick_destroy_bonus=self.brick_destroy_bonus,
+            brick_hit_bonus=self.brick_hit_bonus,
+            survival_bonus=self.survival_bonus,
+            game_over_penalty=self.game_over_penalty,
+            danger_row_penalty=self.danger_row_penalty,
         )
         (grids, globals_arr) = env.get_grid_observation()
 
@@ -116,9 +140,12 @@ class TensorGeneticAlgorithm:
             g.fitness = float(fits[idx])
             g.turns_survived = int(turns[idx])
 
-        max_idx = int(np.argmax(fits))
-        self.best_genome = self.population[max_idx]
-        max_fit = float(fits[max_idx])
+        self.population.sort(key=lambda g: g.fitness, reverse=True)
+        max_fit = self.population[0].fitness
+        if max_fit > self.best_fitness:
+            self.best_fitness = max_fit
+            self.best_genome = Genome.from_dict(self.population[0].to_dict(), device=self.device)
+
         avg_fit = float(np.mean(fits))
         max_turns_survived = int(np.max(turns))
 
@@ -142,7 +169,7 @@ class TensorGeneticAlgorithm:
             p1 = self._tournament_select()
             p2 = self._tournament_select()
             child = p1.crossover(p2)
-            child.mutate(self.mutation_rate, self.mutation_scale)
+            child.mutate(self.mutation_rate, self.mutation_scale, weight_limit=self.weight_limit)
             new_pop.append(child)
 
         self.population = new_pop

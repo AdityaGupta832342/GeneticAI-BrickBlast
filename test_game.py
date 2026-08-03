@@ -159,6 +159,9 @@ class TestRLAndGeneticAI(unittest.TestCase):
         (grids2, globals2), reward, terminated, info = env.step(angles)
         self.assertEqual(reward.shape, (10,))
         self.assertEqual(terminated.shape, (10,))
+        for key in ("hp_damage", "bricks_destroyed", "brick_hits", "ricochet_ticks", "danger_row_bricks"):
+            self.assertIn(key, info)
+            self.assertEqual(info[key].shape, (10,))
 
         ga = TensorGeneticAlgorithm(pop_size=8, model_type="cnn", device="cpu", seed=42)
         max_fit, avg_fit, turns = ga.evaluate_population(max_turns=5)

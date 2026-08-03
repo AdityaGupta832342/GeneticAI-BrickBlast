@@ -20,9 +20,27 @@ from brickblast.constants import (
 
 
 class TensorBrickBlastEnv:
-    def __init__(self, batch_size=200, max_balls=30, device=None, seed=None):
+    def __init__(
+        self,
+        batch_size=200,
+        max_balls=30,
+        device=None,
+        seed=None,
+        ricochet_bonus_scale=0.05,
+        brick_destroy_bonus=2.0,
+        brick_hit_bonus=0.10,
+        survival_bonus=3.0,
+        game_over_penalty=100.0,
+        danger_row_penalty=2.0,
+    ):
         self.batch_size = batch_size
         self.max_balls = max_balls
+        self.ricochet_bonus_scale = float(ricochet_bonus_scale)
+        self.brick_destroy_bonus = float(brick_destroy_bonus)
+        self.brick_hit_bonus = float(brick_hit_bonus)
+        self.survival_bonus = float(survival_bonus)
+        self.game_over_penalty = float(game_over_penalty)
+        self.danger_row_penalty = float(danger_row_penalty)
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -132,7 +150,11 @@ class TensorBrickBlastEnv:
 
         ball_active = active_games.unsqueeze(1).expand(B, M).clone()
 
-        step_reward = torch.zeros((B,), dtype=torch.float32, device=self.device)
+        hp_damage = torch.zeros((B,), dtype=torch.float32, device=self.device)
+        bricks_destroyed = torch.zeros((B,), dtype=torch.float32, device=self.device)
+        brick_hits = torch.zeros((B,), dtype=torch.float32, device=self.device)
+        ricochet_ticks = torch.zeros((B,), dtype=torch.float32, device=self.device)
+        has_hit_brick = torch.zeros((B,), dtype=torch.bool, device=self.device)
         ground_y = float(HEIGHT - BOTTOM_MARGIN)
 
         # Vectorized physics loop (max 100 sub-steps per turn)
@@ -170,6 +192,8 @@ class TensorBrickBlastEnv:
             hit_brick = in_grid & (cell_hp > 0)
 
             if hit_brick.any():
+                has_hit_brick |= hit_brick.any(dim=1)
+                brick_hits += hit_brick.float().sum(dim=1)
                 # Check powerups on hit bricks
                 cell_pu = self.grid_powerup[b_indices, row_idx, col_idx]
                 is_laser = hit_brick & (cell_pu == 3)
@@ -191,8 +215,10 @@ class TensorBrickBlastEnv:
                         dmg = damage[b_true, m]
                         old_val = self.grid_hp[b_true, r, c]
                         actual_dmg = torch.minimum(old_val, dmg)
-                        self.grid_hp[b_true, r, c] -= actual_dmg
-                        step_reward[b_true] += actual_dmg
+                        new_val = old_val - actual_dmg
+                        self.grid_hp[b_true, r, c] = new_val
+                        hp_damage[b_true] += actual_dmg
+                        bricks_destroyed[b_true] += ((old_val > 0) & (new_val <= 0) & (actual_dmg > 0)).float()
 
                         # If laser powerup triggered, clear entire column
                         laser_mask = self.grid_powerup[b_true, r, c] == 3
@@ -201,7 +227,9 @@ class TensorBrickBlastEnv:
                             l_cols = c[laser_mask]
                             for idx_l, col_l in zip(l_idx, l_cols):
                                 col_hp_sum = self.grid_hp[idx_l, :, col_l].sum()
-                                step_reward[idx_l] += col_hp_sum
+                                col_bricks = (self.grid_hp[idx_l, :, col_l] > 0).float().sum()
+                                hp_damage[idx_l] += col_hp_sum
+                                bricks_destroyed[idx_l] += col_bricks
                                 self.grid_hp[idx_l, :, col_l] = 0.0
                                 self.grid_powerup[idx_l, :, col_l] = 0
 
@@ -214,6 +242,7 @@ class TensorBrickBlastEnv:
             # Ground landing check
             landed = ball_active & (ball_y >= ground_y)
             ball_active = ball_active & (~landed)
+            ricochet_ticks += (ball_active.any(dim=1) & has_hit_brick).float()
 
         # End of turn processing for active games
         # 1. Check game over condition: any remaining brick in row 9 (index GRID_ROWS-1)
@@ -232,6 +261,28 @@ class TensorBrickBlastEnv:
             self.grid_powerup[surviving, 0, :] = 0
             self._spawn_top_row(mask=surviving)
 
+        danger_row_bricks = (self.grid_hp[:, GRID_ROWS - 2:, :] > 0).float().sum(dim=(1, 2))
+        step_reward = (
+            hp_damage
+            + bricks_destroyed * self.brick_destroy_bonus
+            + brick_hits * self.brick_hit_bonus
+            + ricochet_ticks * self.ricochet_bonus_scale
+            + surviving.float() * self.survival_bonus
+            - new_terminations.float() * self.game_over_penalty
+            - active_games.float() * danger_row_bricks * self.danger_row_penalty
+        )
         self.total_reward += step_reward
         grids, globals_arr = self.get_grid_observation()
-        return (grids, globals_arr), step_reward, self.terminated, {"turn": self.turn.clone()}
+        return (
+            (grids, globals_arr),
+            step_reward,
+            self.terminated,
+            {
+                "turn": self.turn.clone(),
+                "hp_damage": hp_damage,
+                "bricks_destroyed": bricks_destroyed,
+                "brick_hits": brick_hits,
+                "ricochet_ticks": ricochet_ticks,
+                "danger_row_bricks": danger_row_bricks,
+            },
+        )
