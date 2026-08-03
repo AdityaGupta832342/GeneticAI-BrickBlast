@@ -153,14 +153,16 @@ class Genome(nn.Module):
             return best_angle
 
     @torch.no_grad()
-    def mutate(self, mutation_rate=0.15, mutation_scale=0.25):
+    def mutate(self, mutation_rate=0.15, mutation_scale=0.25, weight_limit=3.0):
         """
         Apply Gaussian mutation directly to PyTorch parameter tensors.
+        Weights are clamped so the unbounded random walk cannot saturate the output Tanh,
+        which would collapse the policy to a single constant angle.
         """
         for param in self.parameters():
             mask = torch.rand_like(param) < mutation_rate
             noise = torch.randn_like(param) * mutation_scale
-            param.add_(mask * noise)
+            param.add_(mask * noise).clamp_(-weight_limit, weight_limit)
 
     @torch.no_grad()
     def crossover(self, other):

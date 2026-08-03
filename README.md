@@ -103,6 +103,8 @@ python play.py
 cd /home/aditya/code/RL_brickblast
 . venv/bin/activate
 python watch_ai.py
+python watch_ai.py --model saved_models/best_rl_model.pt
+python watch_ai.py --model saved_models/best_model.json
 ```
 
 ## Notes
